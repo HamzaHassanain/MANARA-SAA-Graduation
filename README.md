@@ -1,10 +1,6 @@
-# Repovive Judge
+# Repovive Judge — AWS Migration Proposal
 
 > Migrating the Repovive competitive programming judge from DigitalOcean + MongoDB to AWS, with a future-state post-round cheating-detection pipeline.
-
-**Author:** Hamza Mohammed Hassnain
-**Status:** Draft proposal
-**Audience:** Repovive engineering team (internal), Manara AWS SAA reviewer (external)
 
 ---
 
@@ -131,6 +127,7 @@ flowchart TB
 ### 4.2 Single-Submission Flow
 
 ```mermaid
+sequenceDiagram
     actor User
     participant WebApp as Web App
     participant J1 as judge1 (Fargate)
@@ -139,10 +136,15 @@ flowchart TB
     participant J0 as judge0 (EC2)
     participant DDB as DocumentDB
 
+    User->>WebApp: Submit code
+    WebApp->>J1: POST /submission
+    J1->>DDB: Insert submission (status: queued)
     J1->>BQ: Enqueue submission_id
     J1-->>WebApp: 202 Accepted
     WebApp-->>User: Pending verdict
 
+    Note over BQ,J1: Worker picks up<br/>job (throttled concurrency)
+    J1->>BQ: Reserve job
     J1->>S3: GetObject(testcases/{problem_id})
     J1->>J0: Submit batch (16 testcases async)
     J1->>J0: Poll for batch status
@@ -163,7 +165,12 @@ flowchart TB
 **Amazon DocumentDB — app data, replica set.** MongoDB-compatible drop-in for the application data layer (problems metadata, users, submissions, verdicts). Application code is unchanged. The one caveat — DocumentDB is not feature-complete with MongoDB — is handled explicitly in §6.
 
 **Amazon S3 — test cases and submission code, two buckets.**
+The `repovive-testcases` bucket is keyed by `{problem_id}/{testcase_id}.{in|out}`, versioned, KMS-encrypted, with a lifecycle rule to transition cold problems to S3 Intelligent-Tiering.
+The `repovive-submissions` bucket is keyed by `{contest_id}/{user_id}/{submission_id}.{ext}` and stores the user-submitted source. DocumentDB stores metadata pointing to the S3 object. This separation is the precondition for the cheating-detection pipeline in §5.
+
 **RDS PostgreSQL — Multi-AZ.** Hosts `judge0`'s internal job state. Multi-AZ for automatic failover. The cleanup cron becomes an EventBridge schedule firing a Lambda — same logic, no host to maintain.
+
+**Networking.** Single VPC, three subnet tiers across two AZs: public (ALB only), private app (`judge1`), private workers (`judge0`, ElastiCache, RDS, DocumentDB). NAT Gateway for outbound updates only. Security groups follow least-privilege: only `judge1` can reach BullMQ and the internal `judge0` ALB; only `judge0` can reach RDS Postgres; both can reach DocumentDB and S3 (via gateway endpoint).
 
 **Security.** AWS WAF on the public ALB with rate-based rules and the AWS Managed Common Rule Set. Secrets Manager for all DB credentials with rotation enabled. KMS customer-managed keys for S3, RDS, DocumentDB, and EBS. CloudTrail enabled across the account. GuardDuty enabled for threat detection (low-effort, high-signal).
 
