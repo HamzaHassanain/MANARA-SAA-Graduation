@@ -41,10 +41,18 @@ Options: Amazon Cognito User Pool, Auth0 (or another SaaS IdP), self-managed JWT
 Choice: **Cognito User Pool.**
 Rationale: Cognito gives sign-up, sign-in, hosted UI, MFA, password reset, and JWKS-validated JWTs without any code we have to maintain, and integrates natively with ALB (auth action), API Gateway (Cognito authorizer), and SES (verification emails). The free tier covers our first 50K monthly active users, which exceeds current and near-term scale. Auth0 is more feature-rich (enterprise SSO, fine-grained RBAC UI) but introduces a separate vendor relationship and billing line — overkill for a contest platform. Self-managed JWT is rejected: the migration's explicit theme is exiting the "manage our own X" business, and rolling password reset, MFA, and rate-limited login flows from scratch is exactly the kind of work AWS has already solved.
 
-**5.8 Web frontend hosting — S3+CloudFront vs Fargate SSR.**
-Options: Static SPA on S3 + CloudFront (with `/api/*` proxied to ALB), or Next.js SSR on a separate Fargate service.
-Choice: **Static SPA on S3 + CloudFront.**
-Rationale: The frontend is highly cacheable and largely client-rendered (the contest dashboard and editor are interactive but driven by judge1 API calls). Static hosting on S3 + CloudFront gives global edge delivery, zero idle compute cost, and removes a deployment target. SSR on Fargate would add cost and an extra deploy pipeline for marginal benefit. Per-page SEO is a non-goal for an authenticated contest platform.
+**5.8 Next.js hosting — AWS-native serverless primitives (OpenNext) vs AWS Amplify Hosting vs Fargate SSR.**
+Options:
+- **AWS-native serverless primitives** in the OpenNext shape: CloudFront + S3 + Lambda (Server Function) + Lambda (Image Optimization) + DynamoDB (ISR tag cache) + SQS (revalidation queue).
+- **AWS Amplify Hosting** — managed Next.js hosting that wraps the above into one service.
+- **Next.js on ECS Fargate** — run the Next.js Node server as a long-lived container behind an ALB.
+Choice: **AWS-native serverless primitives (OpenNext pattern).**
+Rationale: [Repovive](https://repovive.com/) is a full Next.js app with heavy SSR, RSC, API routes, and Server Actions, so a static export is off the table immediately (it would lose most of the app's behaviour). Between the three real options:
+- **Fargate SSR** is rejected because Next.js workloads are extremely bursty (a contest spawns thousands of requests in seconds, then idles between rounds). Paying for warm containers between rounds wastes money, and scaling containers is slower than scaling Lambda concurrency. The exception — cold-start sensitivity for the first few requests after idle — is addressed with **provisioned concurrency** on a scheduled action mirroring the `judge0` pre-warm.
+- **Amplify Hosting** is a strong simplification — one service, one deploy command, native Next.js feature support — but for an SAA-level submission the primitives matter: showing how CloudFront behaviours, Lambda Function URLs, DynamoDB tag caching, and SQS-driven background revalidation compose to *be* what Amplify is hiding is more educational and more controllable. Amplify is the fallback if operational burden of managing the primitives becomes real.
+- **AWS-native primitives** give: per-component IAM scoping, per-Lambda CloudWatch / X-Ray observability, explicit control of CloudFront cache behaviours, and direct visibility into the cache (DynamoDB) and revalidation queue (SQS). This is also the design Next.js itself targets — the OpenNext community maintains the adapter that produces exactly this topology from a stock `next build`.
+
+A side benefit: because the Server Function is VPC-attached, it can call `judge1` over the **internal** ALB. The public ALB that this design had before disappears — CloudFront becomes the only public AWS endpoint, which is a meaningful security improvement.
 
 ---
 

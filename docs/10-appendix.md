@@ -10,11 +10,15 @@
 | ---------------------- | ------------------------------------ | -------------------------------------------------------- |
 | DNS                    | Amazon Route 53                      | Alias to CloudFront, health checks                       |
 | Certificates           | AWS Certificate Manager              | TLS certs for CloudFront and ALB, auto-rotated           |
-| Edge                   | CloudFront, AWS WAF                  | Caching, DDoS, OWASP rules                               |
-| Frontend hosting       | Amazon S3 + CloudFront               | Static SPA assets (Next.js export)                       |
+| Edge                   | CloudFront, AWS WAF                  | Only public AWS endpoint; caching, DDoS, OWASP rules     |
+| Frontend — static      | Amazon S3                            | Next.js build output, prerendered HTML, `public/`        |
+| Frontend — server      | AWS Lambda (Server Function URL)     | Next.js SSR + RSC + API routes + Server Actions          |
+| Frontend — images      | AWS Lambda (Image Optimization)      | `/_next/image` on-the-fly resizing                       |
+| Frontend — ISR cache   | Amazon DynamoDB                      | Next.js cache tags + per-route revalidation metadata     |
+| Frontend — revalidate  | Amazon SQS                           | Background ISR revalidation queue                        |
 | End-user identity      | Amazon Cognito User Pool             | Sign-up / sign-in / MFA / JWT issuance                   |
 | Transactional email    | Amazon SES                           | Cognito mail, contest invites, verdict notifications     |
-| Load balancing         | Application Load Balancer            | L7 routing, health checks                                |
+| Load balancing         | Internal ALB                         | VPC-internal L7 routing in front of `judge1` (no public ALB) |
 | Compute (app)          | ECS Fargate                          | `judge1` orchestration layer                             |
 | Compute (workers)      | ECS on EC2 + ASG                     | `judge0` sandboxed execution                             |
 | Container registry     | Amazon ECR                           | Private image registry with scan-on-push                 |

@@ -40,7 +40,7 @@ Round-end is an application-level event. When the web app marks a round as compl
 
 A final Lambda reads all three signal streams from S3, combines them into a per-submission suspicion score (weighted sum with weights as configuration, not code), and writes flagged submissions to a `flagged_submissions` collection in DocumentDB with status `pending_review`. An SNS topic notifies the moderator team via email and (optionally) a Slack webhook.
 
-Moderators triage flagged submissions in the Repovive web app; their confirm/dismiss/escalate actions are persisted as ground-truth labels that feed a future fine-tuned classifier.
+Moderators triage flagged submissions in the [Repovive](https://repovive.com/) web app; their confirm/dismiss/escalate actions are persisted as ground-truth labels that feed a future fine-tuned classifier.
 
 ---
 
