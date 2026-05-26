@@ -8,7 +8,7 @@
 
 | Component                       | RTO          | RPO       | Mechanism                                                            |
 | ------------------------------- | ------------ | --------- | -------------------------------------------------------------------- |
-| Orchestrator (Fargate)          | < 5 min      | n/a       | Stateless; ECS service replaces failed tasks                         |
+| Orchestrator (judge1, Fargate)  | < 5 min      | n/a       | Stateless; ECS service replaces failed tasks                         |
 | `judge0` (ECS-on-EC2)           | < 10 min     | n/a       | ASG replaces hosts; in-flight batches re-queued by the durable queue |
 | ElastiCache for Redis           | < 5 min      | < 1 min   | Multi-AZ automatic failover to replica                               |
 | RDS PostgreSQL                  | < 5 min      | < 1 min   | Multi-AZ automatic failover + 35-day PITR                            |
@@ -22,7 +22,7 @@
 
 **Bedrock cost surprise on a high-volume round.** Risk: a viral round produces 100K submissions and the LLM-detection bill spikes. Mitigation: per-round cost budget alarm; fall back to sampling (random subset + always-evaluate-AC subset) when budget is exceeded.
 
-**Spot interruption during a contest.** Risk: Spot fleet termination during a round causes verdict delays. Mitigation: On-Demand baseline absorbs interruptions; the orchestrator's timeout-and-retry re-queues in-flight batches; capacity-optimized Spot allocation strategy reduces interruption rate.
+**Spot interruption during a contest.** Risk: Spot fleet termination during a round causes verdict delays. Mitigation: On-Demand baseline absorbs interruptions; the orchestrator's (judge1) timeout-and-retry re-queues in-flight batches; capacity-optimized Spot allocation strategy reduces interruption rate.
 
 **Untrusted code escape from the sandbox.** Risk: a 0-day in `isolate` or the host kernel allows user code to break out of the sandbox. Mitigation: `judge0` hosts run in a dedicated private subnet with **no egress to the public internet** (no NAT route, no IGW path) and no IAM credentials beyond what is strictly required for ECS task lifecycle; outbound AWS-service access is through VPC endpoints only; GuardDuty Runtime Monitoring on the EC2 hosts catches anomalous syscalls.
 

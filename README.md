@@ -10,9 +10,9 @@ This repository is my graduation submission for the Manara **AWS Solutions Archi
 
 A competitive programming judge has an unusual operational profile: idle for long stretches, then a contest start produces thousands of submissions per minute against an otherwise quiet platform — each submission running untrusted code in a kernel-level sandbox. The architecture has to handle all four of (a) bursty, scheduled traffic, (b) sandboxed execution of arbitrary code, (c) multi-tenant moderator workflows, and (d) post-round analytics on every submission.
 
-This design composes AWS primitives around two well-known building blocks: [**Judge0**](https://judge0.com/) (the open-source sandbox executor) for code execution, and a stateless **orchestrator** service for submission lifecycle. The frontend is a full Next.js application deployed in the **OpenNext** shape — CloudFront fronting a Lambda Server Function, an Image Optimization Lambda, S3 for static assets, DynamoDB for the ISR tag cache, and SQS for background revalidation. The data tier is **DocumentDB** (Mongo-compatible app data), **ElastiCache for Redis** (durable submission queue), **RDS PostgreSQL** (judge0 internal state), and **S3** (test cases + submissions, partitioned by problem and contest). The post-round cheating-detection pipeline runs on **Step Functions** orchestrating **AWS Batch** (plagiarism), **Lambda + Bedrock** (LLM-generated code detection), and **Athena** (behavioral signals).
+This design composes AWS primitives around two well-known building blocks: [**Judge0**](https://judge0.com/) (the open-source sandbox executor) for code execution, and a stateless **orchestrator** (judge1) service for submission lifecycle. The frontend is a **static single-page app hosted on Amazon S3 and served via CloudFront**; CloudFront also fronts the orchestrator's ALB on an `/api/*` behavior so it remains the only public AWS endpoint. The data tier is **DocumentDB** (Mongo-compatible app data), **ElastiCache for Redis** (durable submission queue), **RDS PostgreSQL** (judge0 internal state), and **S3** (test cases + submissions, partitioned by problem and contest). The post-round cheating-detection pipeline runs on **Step Functions** orchestrating **AWS Batch** (plagiarism), **Lambda + Bedrock** (LLM-generated code detection), and **Athena** (behavioral signals).
 
-The architectural pivot point is the choice of compute for the workers: `judge0` requires privileged container capabilities for `isolate`, which Fargate does not allow — so workers run on **ECS-on-EC2 with autoscaling**, while the stateless orchestrator runs on **Fargate**. Surge capacity comes from Spot in a mixed-instance ASG, driven by a custom CloudWatch metric measuring queue depth.
+The architectural pivot point is the choice of compute for the workers: `judge0` requires privileged container capabilities for `isolate`, which Fargate does not allow — so workers run on **ECS-on-EC2 with autoscaling**, while the stateless orchestrator (judge1) runs on **Fargate**. Surge capacity comes from Spot in a mixed-instance ASG, driven by a custom CloudWatch metric measuring queue depth.
 
 ---
 
@@ -20,7 +20,7 @@ The architectural pivot point is the choice of compute for the workers: `judge0`
 
 ![Request Lifecycle](./drawings/Request-Lifecycle.jpg)
 
-Three companion views (identity, monitoring, security/backup) and the full component breakdown live in [docs/02-architecture.md](./docs/02-architecture.md).
+Five companion views (identity, monitoring, security/backup, VPC topology, autoscaling) and the full component breakdown live in [docs/02-architecture.md](./docs/02-architecture.md).
 
 ---
 
