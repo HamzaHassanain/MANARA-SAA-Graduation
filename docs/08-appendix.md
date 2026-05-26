@@ -1,10 +1,10 @@
-[← README](../README.md) | [← Prev: Future Work](./09-future-work.md) | **Appendix**
+[← README](../README.md) | [← Prev: Future Work](./07-future-work.md) | **Appendix**
 
 ---
 
-# 10. Appendix
+# 8. Appendix
 
-## 10.1 Service Inventory
+## 8.1 Service Inventory
 
 | Layer                  | Service                              | Purpose                                                  |
 | ---------------------- | ------------------------------------ | -------------------------------------------------------- |
@@ -18,13 +18,13 @@
 | Frontend — revalidate  | Amazon SQS                           | Background ISR revalidation queue                        |
 | End-user identity      | Amazon Cognito User Pool             | Sign-up / sign-in / MFA / JWT issuance                   |
 | Transactional email    | Amazon SES                           | Cognito mail, contest invites, verdict notifications     |
-| Load balancing         | Internal ALB                         | VPC-internal L7 routing in front of `judge1` (no public ALB) |
-| Compute (app)          | ECS Fargate                          | `judge1` orchestration layer                             |
+| Load balancing         | Internal ALB                         | VPC-internal L7 routing in front of the orchestrator     |
+| Compute (app)          | ECS Fargate                          | Submission orchestrator                                  |
 | Compute (workers)      | ECS on EC2 + ASG                     | `judge0` sandboxed execution                             |
 | Container registry     | Amazon ECR                           | Private image registry with scan-on-push                 |
 | Operator access        | SSM Session Manager                  | Bastion-free shell, session logging, patching            |
 | Networking             | VPC, NAT GW, VPC Endpoints           | Subnet tiers; private connectivity to AWS services       |
-| Queue                  | ElastiCache for Redis                | BullMQ backing store                                     |
+| Queue                  | ElastiCache for Redis                | Durable submission queue (BullMQ backing store)          |
 | Database (app)         | Amazon DocumentDB                    | Mongo-compatible app data                                |
 | Database (job state)   | RDS PostgreSQL                       | `judge0` internal state                                  |
 | Object storage         | Amazon S3                            | Test cases, submissions, analytics, logs                 |
@@ -45,10 +45,10 @@
 | Eventing               | Amazon EventBridge                   | Round-ended trigger                                      |
 | Notification           | Amazon SNS                           | `ops-critical` / `ops-warning` + moderator alerts        |
 
-## 10.2 Sample BullMQ-Queue-Depth Scaling Signal
+## 8.2 Queue-Depth Scaling Signal
 
-A small sidecar Lambda runs every minute, reads the BullMQ "waiting" count from ElastiCache, and publishes it as a custom CloudWatch metric `Repovive/judge1/QueueDepth`. The `judge0` ECS service then uses a target-tracking scaling policy on this metric with a target value (e.g., 50 waiting jobs per running task). This replaces the manual 3-click scale-up entirely.
+A small sidecar Lambda runs every minute, reads the "waiting" count from the ElastiCache-backed queue, and publishes it as a custom CloudWatch metric `Judge/Orchestrator/QueueDepth`. The `judge0` ECS service then uses a target-tracking scaling policy on this metric with a target value (e.g., 50 waiting jobs per running task). This is the primary scale signal for surge capacity; a scheduled action provides pre-warm 15 minutes ahead of any known contest start.
 
 ---
 
-[← README](../README.md) | [← Prev: Future Work](./09-future-work.md) | **Appendix**
+[← README](../README.md) | [← Prev: Future Work](./07-future-work.md) | **Appendix**
