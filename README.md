@@ -44,7 +44,6 @@ Three companion views (identity, monitoring, security/backup) and the full compo
 ```
 .
 ├── README.md                          ← this file — overview, hero diagram, TOC
-├── AWS SAA Project Submission.pdf     ← single-PDF export of the docs (for offline review)
 ├── docs/                              ← detailed sections, each a standalone page
 │   ├── 01-requirements.md
 │   ├── 02-architecture.md
@@ -54,7 +53,7 @@ Three companion views (identity, monitoring, security/backup) and the full compo
 │   ├── 06-risks.md
 │   ├── 07-future-work.md
 │   └── 08-appendix.md
-└── drawings/                          ← exported PNG/SVG versions of the architecture diagrams (Mermaid → image)
+└── drawings/                          ← architecture diagram images referenced from the docs
 ```
 
 Each doc file carries `← Prev | Next →` navigation at top and bottom, so you can read straight through or jump in.
