@@ -82,6 +82,7 @@ Three companion views (identity, monitoring, security/backup) and the full compo
 | # | Document | What's in it |
 |---|----------|--------------|
 | 1 | [Current State](./docs/01-current-state.md) | Today's DigitalOcean stack and its pain points |
+| 1a | [Judge Internals (Current)](./docs/01a-judge-internals.md) | Deep dive into `judge1` / `judge0` today — pipeline, queue, Judge0 client safeguards, scaling profiles |
 | 2 | [Goals & Non-Goals](./docs/02-goals.md) | What we're solving for, and what we're explicitly not |
 | 3 | [Target Architecture](./docs/03-architecture.md) | Four architectural views + component-by-component breakdown |
 | 4 | [Cheating Detection Pipeline](./docs/04-cheating-detection.md) | Post-round Step Functions / Batch / Bedrock pipeline |
@@ -98,9 +99,11 @@ Three companion views (identity, monitoring, security/backup) and the full compo
 
 ```
 .
-├── README.md          ← this file — overview, hero diagram, TOC
-├── docs/              ← detailed sections, each a standalone page
+├── README.md                          ← this file — overview, hero diagram, TOC
+├── AWS SAA Project Submission.pdf     ← single-PDF export of the proposal (for offline review)
+├── docs/                              ← detailed sections, each a standalone page
 │   ├── 01-current-state.md
+│   ├── 01a-judge-internals.md
 │   ├── 02-goals.md
 │   ├── 03-architecture.md
 │   ├── 04-cheating-detection.md
@@ -110,6 +113,7 @@ Three companion views (identity, monitoring, security/backup) and the full compo
 │   ├── 08-risks.md
 │   ├── 09-future-work.md
 │   └── 10-appendix.md
+├── drawings/          ← exported PNG/SVG versions of the architecture diagrams (Mermaid → image)
 └── scripts/           ← helper scripts (push, etc.)
 ```
 

@@ -1,4 +1,4 @@
-[← README](../README.md) | **Current State** | [Next: Goals & Non-Goals →](./02-goals.md)
+[← README](../README.md) | **Current State** | [Next: Judge Internals →](./01a-judge-internals.md)
 
 ---
 
@@ -9,7 +9,7 @@
 ```mermaid
 flowchart LR
     User[Web Users] --> WebApp[Repovive Web App]
-    WebApp --> J1[judge1<br/>BullMQ throttle + orchestration]
+    WebApp --> J1[judge1<br/>in-process fastq queue<br/>+ orchestration]
     J1 --> Mongo[(MongoDB<br/>app data + testcases + verdicts)]
     J1 --> Nginx{Nginx Proxy}
     Nginx --> J0A[judge0 instance A<br/>1 server + 2 workers]
@@ -26,7 +26,7 @@ flowchart LR
 The flow for a single submission:
 
 1. Web app POSTs a submission to `judge1`.
-2. `judge1` enqueues the submission to a BullMQ queue backed by Redis. BullMQ throttles concurrency so we don't OOM `judge0` containers.
+2. `judge1` enqueues the submission to an **in-process [`fastq`](https://github.com/mcollina/fastq) queue** — concurrency-limited (queue depth ≤ 500, configurable concurrency per scaling profile) so we don't OOM `judge0` containers. A semaphore + circuit breaker + backpressure stack in front of the Judge0 HTTP client adds a second layer of protection. See [Judge Internals §1a.3–1a.4](./01a-judge-internals.md) for the full picture.
 3. A `judge1` worker pulls the submission, fetches test cases from MongoDB, and splits them into batches of 16.
 4. Each batch is sent to a `judge0` server (round-robined by Nginx) as an async job with the compiled binary.
 5. `judge1` polls `judge0` for completion of each batch.
@@ -42,7 +42,7 @@ Operationally, `judge0` instances are deployed manually before contests using an
 
 **Ops burden of N nginx-fronted instances.** As `N` grows, the chance of configuration drift between droplets grows linearly. There is no central control plane.
 
-**No observability.** We have basic process metrics, but no distributed tracing across `judge1` → BullMQ → `judge0` → Postgres, so root-causing a slow submission is guesswork.
+**No observability.** We have basic process metrics, but no distributed tracing across `judge1` → fastq worker → `judge0` → Postgres, so root-causing a slow submission is guesswork.
 
 **No disaster-recovery posture.** A datacenter incident at the current provider takes the whole platform offline. There is no Multi-AZ story for MongoDB, Postgres, or Redis.
 
@@ -50,4 +50,4 @@ Operationally, `judge0` instances are deployed manually before contests using an
 
 ---
 
-[← README](../README.md) | **Current State** | [Next: Goals & Non-Goals →](./02-goals.md)
+[← README](../README.md) | **Current State** | [Next: Judge Internals →](./01a-judge-internals.md)

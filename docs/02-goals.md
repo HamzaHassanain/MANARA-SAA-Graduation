@@ -1,4 +1,4 @@
-[← README](../README.md) | [← Prev: Current State](./01-current-state.md) | **Goals & Non-Goals** | [Next: Target Architecture →](./03-architecture.md)
+[← README](../README.md) | [← Prev: Judge Internals](./01a-judge-internals.md) | **Goals & Non-Goals** | [Next: Target Architecture →](./03-architecture.md)
 
 ---
 
@@ -21,8 +21,8 @@
 - Rewriting `judge0` or replacing it with a custom executor.
 - Real-time cheating detection during contests (post-round is sufficient and far cheaper).
 - Multi-region active-active. Single region, Multi-AZ is the right target for our user base and budget.
-- Migrating off BullMQ. BullMQ on ElastiCache Redis is a clean port.
+- Reworking the queue API contract. The migration swaps today's in-process [`fastq`](https://github.com/mcollina/fastq) for **BullMQ on ElastiCache Redis** to get durability and cross-task fairness, but the producer/consumer surface inside `judge1` stays as-is — the queue implementation changes, the orchestration code does not.
 
 ---
 
-[← README](../README.md) | [← Prev: Current State](./01-current-state.md) | **Goals & Non-Goals** | [Next: Target Architecture →](./03-architecture.md)
+[← README](../README.md) | [← Prev: Judge Internals](./01a-judge-internals.md) | **Goals & Non-Goals** | [Next: Target Architecture →](./03-architecture.md)
