@@ -20,7 +20,9 @@
 | Container registry     | Amazon ECR                           | Private image registry with scan-on-push                 |
 | Operator access        | SSM Session Manager                  | Bastion-free shell, session logging, patching            |
 | Networking             | VPC, NAT GW, VPC Endpoints           | Subnet tiers; private connectivity to AWS services       |
-| Queue                  | ElastiCache for Redis                | Durable submission queue (BullMQ backing store)          |
+| Queue + standings      | ElastiCache for Redis                | Durable submission queue (BullMQ) + per-contest standings ZSET + pub/sub for rank deltas |
+| Standings publisher    | ECS Fargate                          | Reads Redis pub/sub, fans WS deltas + writes 5s top-100 snapshot to S3 |
+| Realtime push          | API Gateway WebSocket                | Verdict + standings-delta push to 40K concurrent clients |
 | Database (app)         | Amazon DocumentDB                    | Mongo-compatible app data                                |
 | Database (job state)   | RDS PostgreSQL                       | `judge0` internal state                                  |
 | Object storage         | Amazon S3                            | Test cases, submissions, analytics, logs                 |

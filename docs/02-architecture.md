@@ -1,4 +1,4 @@
-[← README](../README.md) | [← Prev: Requirements](./01-requirements.md) | **Architecture** | [Next: Cheating Detection →](./03-cheating-detection.md)
+[← README](../README.md) | [← Prev: Requirements](./01-requirements.md) | **Architecture** | [Next: Post-Round Processing →](./03-post-round-processing.md)
 
 ---
 
@@ -6,7 +6,7 @@
 
 ## 2.1 Overview
 
-To keep each picture readable, the architecture is documented as **six views**, each one a clean top-to-bottom pipeline:
+To keep each picture readable, the architecture is documented as **seven views**, each one a clean top-to-bottom pipeline:
 
 - **2.1.1 Request lifecycle** — the spine: what happens when a user submits code.
 - **2.1.2 Identity & user lifecycle** — sign-up, sign-in, transactional email.
@@ -14,6 +14,7 @@ To keep each picture readable, the architecture is documented as **six views**, 
 - **2.1.4 Security, backup & supporting services** — KMS, Secrets Manager, GuardDuty/Config/Security Hub, AWS Backup, ECR, VPC Endpoints — each with its actual connection to the spine, not just listed.
 - **2.1.5 VPC & network topology** — subnet tiers, AZ layout, NAT, VPC endpoints, and security-group lockdowns.
 - **2.1.6 Autoscaling & capacity strategy** — the two-signal scaling story (scheduled warm-up + queue-depth target-tracking) and the mixed Spot / On-Demand fleet.
+- **2.1.7 Live standings & rating** — how 40K concurrent users see real-time leaderboard updates without melting the database, and where rating deltas are computed.
 
 ### 2.1.1 Request Lifecycle
 
@@ -39,6 +40,36 @@ To keep each picture readable, the architecture is documented as **six views**, 
 
 ![Autoscaling and Capacity Strategy](../drawings/Autoscaling-Capacity-Strategy.jpg)
 
+### 2.1.7 Live Standings & Rating
+
+A division-4 contest places ~40,000 users on the standings page simultaneously, each expecting near-real-time updates. The naïve approach — every standings reader polls the database every few seconds, or a cron job recomputes the full leaderboard every minute — collapses under that load. The architecture instead splits the problem into a **write path** (incremental rank updates on every verdict) and a **read path** (CloudFront-cached snapshot + WebSocket deltas), then handles **rating** as a separate post-round step.
+
+```mermaid
+flowchart LR
+    subgraph "Live (during contest)"
+        VJ[judge0 verdict] --> O["Orchestrator (judge1)<br/>ECS Fargate"]
+        O -- "ZADD score,user" --> Z[(ElastiCache Redis<br/>ZSET per contest)]
+        O -- "delta event" --> P["Standings Publisher<br/>(Fargate task)"]
+        P -- "WS delta push" --> AG[API Gateway<br/>WebSocket]
+        P -- "snapshot every 5s" --> S3S[S3: standings/top100.json]
+        S3S --> CF[CloudFront]
+        AG --> U1[40K live clients]
+        CF --> U1
+    end
+
+    subgraph "Post-round (one-shot)"
+        EB[EventBridge: round_ended] --> SF[Step Functions]
+        SF --> RC[Rating Δ Fargate task<br/>reads final ZSET]
+        RC --> DDB[(DocumentDB:<br/>users.rating)]
+    end
+```
+
+**Write path.** Every accepted verdict that lands in the orchestrator (judge1) triggers a single `ZADD` into a **Redis sorted set** keyed `contest:{id}:standings`, with the score composed as `(solved_count, -penalty, -last_AC_time)` so `ZREVRANGE` returns the leaderboard in display order in O(log N). The orchestrator also publishes a small "rank delta" event onto an internal Redis pub/sub channel — only the affected user, their old rank, and their new rank.
+
+**Read path.** A small **Standings Publisher** Fargate service subscribes to the Redis pub/sub channel and does two things: (a) pushes per-user delta messages over **API Gateway WebSocket** to subscribed clients, and (b) every 5 seconds, dumps the top-100 (`ZREVRANGE 0 99 WITHSCORES`) to `s3://standings/contest-{id}/top100.json`, which CloudFront caches with a 5-second TTL. The result: 39,900 of the 40,000 live users get the public top-100 from a CloudFront edge cache (one origin fetch per 5 seconds, not 40K), while logged-in users also receive a targeted WebSocket delta when *their own* rank changes.
+
+**Rating calculation.** Rating is **post-round only** — there is no meaningful Elo update mid-contest, so the work moves into the existing Step Functions pipeline described in [Post-Round Processing](./03-post-round-processing.md). When the `round_ended` event fires, a Fargate task reads the final ZSET, applies the Codeforces-style simplified Elo formula in O(N log N) for N=30K, and writes per-user rating deltas back to DocumentDB. This is the same pattern as the cheating-detection branch — two parallel branches of one Step Functions execution.
+
 ## 2.2 Single-Submission Flow
 
 ![Single Submission Flow](../drawings/Single-Submission-Flow.jpg)
@@ -54,13 +85,17 @@ To keep each picture readable, the architecture is documented as **six views**, 
 
 **`judge0` cluster — ECS on EC2.** This is the most important architectural decision in this design: `judge0` uses `isolate` for sandboxing untrusted user code, which requires cgroups and privileged container access. **AWS Fargate does not support privileged mode**, so `judge0` workers must run on EC2 (via the ECS EC2 launch type, or a plain ASG-managed fleet). Each ECS task is shaped as 1 `judge0` server + 2 workers, giving a clean unit of capacity. The fleet sits behind an _internal_ ALB. The ASG is driven by two scaling signals: a scheduled action that scales up 15 minutes before any known contest, and a target-tracking policy on a custom CloudWatch metric — queue depth — that handles surprise load. Spot capacity is a strong fit for workers (a killed instance simply re-queues its in-flight batch), and is recommended for cost optimization once the platform stabilizes.
 
-**ElastiCache for Redis — Multi-AZ.** Backs the durable submission queue (BullMQ wire-compatible). Cluster mode disabled is fine for the assumed scale; automatic failover and Multi-AZ are enabled. Two properties matter for the rest of the design: the queue is durable (a crashed orchestrator (judge1) task does not lose in-flight work), and queue depth is exposed as a first-class CloudWatch metric for autoscaling.
+**ElastiCache for Redis — Multi-AZ.** Backs three workloads on the same replication group: the **durable submission queue** (BullMQ wire-compatible), the **live standings ZSET** (one sorted set per contest, `contest:{id}:standings`), and an internal **pub/sub channel** that the Standings Publisher subscribes to for rank-delta events. Cluster mode disabled is fine for the assumed scale; automatic failover and Multi-AZ are enabled. Three properties matter for the rest of the design: the queue is durable (a crashed orchestrator (judge1) task does not lose in-flight work), queue depth is exposed as a first-class CloudWatch metric for autoscaling, and the standings ZSET gives O(log N) inserts and O(log N + k) range reads — orders of magnitude cheaper than any per-minute "recompute the whole leaderboard" job.
+
+**Standings Publisher — ECS Fargate.** A small stateless service whose only job is fanning standings updates out to clients. It subscribes to the Redis pub/sub `standings:deltas` channel, pushes per-user rank deltas to subscribed WebSocket clients via the API Gateway WebSocket Management API, and every 5 seconds writes a fresh `top100.json` to S3 (which CloudFront serves with a 5-second TTL). Stateless, so it scales the same way as the orchestrator (judge1) — target-tracking on `ALBRequestCountPerTarget`, or a simpler `CPUUtilization` target since its work is bursty-but-uniform.
+
+**API Gateway WebSocket — live verdict and standings push.** A single WebSocket API handles two distinct push channels: per-user **verdict notifications** (sent by the orchestrator (judge1) when a submission finalizes) and per-user **standings rank deltas** (sent by the Standings Publisher). Cognito JWT is validated on the `$connect` route via a Lambda authorizer; the client's Cognito `sub` is the connection key. API Gateway WebSocket scales to 1M concurrent connections with the default account limits, comfortably above the 40K target.
 
 **Amazon DocumentDB — app data, replica set.** MongoDB-compatible storage for the application data layer (problems metadata, users, submissions, verdicts). The caveat — DocumentDB is not feature-complete with MongoDB — is handled explicitly in [Design Decisions](./04-design-decisions.md).
 
 **Amazon S3 — test cases and submission code, two buckets.**
 The `testcases` bucket is keyed by `{problem_id}/{testcase_id}.{in|out}`, versioned, KMS-encrypted, with a lifecycle rule to transition cold problems to S3 Intelligent-Tiering.
-The `submissions` bucket is keyed by `{contest_id}/{user_id}/{submission_id}.{ext}` and stores the user-submitted source. DocumentDB stores metadata pointing to the S3 object. This separation is the precondition for the [cheating-detection pipeline](./03-cheating-detection.md).
+The `submissions` bucket is keyed by `{contest_id}/{user_id}/{submission_id}.{ext}` and stores the user-submitted source. DocumentDB stores metadata pointing to the S3 object. This separation is the precondition for the [post-round processing pipeline](./03-post-round-processing.md).
 
 **RDS PostgreSQL — Multi-AZ.** Hosts `judge0`'s internal job state. Multi-AZ for automatic failover. State cleanup runs as an EventBridge schedule firing a Lambda — no host to maintain.
 
@@ -109,4 +144,4 @@ The `submissions` bucket is keyed by `{contest_id}/{user_id}/{submission_id}.{ex
 
 ---
 
-[← README](../README.md) | [← Prev: Requirements](./01-requirements.md) | **Architecture** | [Next: Cheating Detection →](./03-cheating-detection.md)
+[← README](../README.md) | [← Prev: Requirements](./01-requirements.md) | **Architecture** | [Next: Post-Round Processing →](./03-post-round-processing.md)

@@ -20,7 +20,7 @@ The architectural pivot point is the choice of compute for the workers: `judge0`
 
 ![Request Lifecycle](./drawings/Request-Lifecycle.jpg)
 
-Five companion views (identity, monitoring, security/backup, VPC topology, autoscaling) and the full component breakdown live in [docs/02-architecture.md](./docs/02-architecture.md).
+Six companion views (identity, monitoring, security/backup, VPC topology, autoscaling, live standings & rating) and the full component breakdown live in [docs/02-architecture.md](./docs/02-architecture.md).
 
 ---
 
@@ -29,9 +29,9 @@ Five companion views (identity, monitoring, security/backup, VPC topology, autos
 | # | Document | What's in it |
 |---|----------|--------------|
 | 1 | [Requirements](./docs/01-requirements.md) | Functional + non-functional requirements; explicit out-of-scope |
-| 2 | [Architecture](./docs/02-architecture.md) | Four architectural views + component-by-component breakdown |
-| 3 | [Cheating Detection Pipeline](./docs/03-cheating-detection.md) | Post-round Step Functions / Batch / Bedrock pipeline |
-| 4 | [Design Decisions](./docs/04-design-decisions.md) | Eight architectural choices with options, rationale, alternatives |
+| 2 | [Architecture](./docs/02-architecture.md) | Seven architectural views + component-by-component breakdown |
+| 3 | [Post-Round Processing](./docs/03-post-round-processing.md) | Post-round Step Functions pipeline: cheating detection + rating calculation |
+| 4 | [Design Decisions](./docs/04-design-decisions.md) | Nine architectural choices with options, rationale, alternatives |
 | 5 | [Well-Architected Mapping](./docs/05-well-architected.md) | Mapping to the six AWS WAFR pillars |
 | 6 | [Risks & Mitigations](./docs/06-risks.md) | RTO/RPO targets + risk register |
 | 7 | [Future Work](./docs/07-future-work.md) | Improvements queued for v2 |
@@ -47,7 +47,7 @@ Five companion views (identity, monitoring, security/backup, VPC topology, autos
 ├── docs/                              ← detailed sections, each a standalone page
 │   ├── 01-requirements.md
 │   ├── 02-architecture.md
-│   ├── 03-cheating-detection.md
+│   ├── 03-post-round-processing.md
 │   ├── 04-design-decisions.md
 │   ├── 05-well-architected.md
 │   ├── 06-risks.md

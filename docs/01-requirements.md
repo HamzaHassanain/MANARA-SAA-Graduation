@@ -22,7 +22,19 @@ This is a reference architecture for a **competitive programming judge platform*
 - **Observability.** Distributed tracing across the full submission path; a synthetic submit-and-poll canary as the source-of-truth liveness signal.
 - **Security.** Defence-in-depth: WAF at the edge, private subnets for all compute and data, least-privilege IAM task roles, KMS-encrypted storage, Secrets Manager with rotation, GuardDuty + Security Hub for threat detection.
 
-## 1.3 Out of Scope
+## 1.3 Scale Anchor
+
+The target scale of this design is anchored on a real Codeforces division-4 round, the largest competitive-programming event class with publicly observable load. The anchor numbers shape every downstream capacity decision (autoscaling targets, queue sizing, WebSocket fan-out, standings refresh cadence):
+
+- **~40,000 concurrent live participants** during a round (matches a typical CF Div. 4 peak).
+- **~1,000–2,000 submissions/second** for the first 30–60 seconds after a problem unlocks; mean rate over the round is ~10× lower.
+- **~40,000 concurrent standings readers** — effectively all live participants are also watching the leaderboard.
+- **~30,000 ranked participants** at the end of the round, each receiving a rating delta in the post-round pipeline.
+- **Steady-state between contests:** near-zero traffic; the platform must scale down to a baseline of 1–2 worker instances.
+
+These numbers are the contract the rest of the architecture is sized against — every "auto-scales to N" or "handles a burst of M" claim later in the docs traces back to this section.
+
+## 1.4 Out of Scope
 
 - **Multi-region active-active.** Single region with Multi-AZ is the right target for the user base assumed here. A Pilot Light cross-region DR path is enumerated in [Future Work](./07-future-work.md).
 - **Real-time cheating detection.** Per-submission ML signals add verdict latency and have unacceptable false-positive risk. The architecture provides **post-round** analytics instead.

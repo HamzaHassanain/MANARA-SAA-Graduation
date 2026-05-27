@@ -1,4 +1,4 @@
-[← README](../README.md) | [← Prev: Cheating Detection](./03-cheating-detection.md) | **Design Decisions** | [Next: Well-Architected →](./05-well-architected.md)
+[← README](../README.md) | [← Prev: Post-Round Processing](./03-post-round-processing.md) | **Design Decisions** | [Next: Well-Architected →](./05-well-architected.md)
 
 ---
 
@@ -46,6 +46,11 @@ Options: static SPA delivered from S3+CloudFront with all dynamic behaviour hand
 Choice: **Static SPA on S3+CloudFront.**
 Rationale: A contest judge's frontend is fundamentally a thin client over the orchestrator (judge1) API — submission forms, leaderboard polling, verdict displays. None of that needs server-side rendering for SEO (auth-gated content) or for initial paint (the user is signed in and on a warm CDN edge). Static delivery from S3 through CloudFront gives global low-latency reads, near-zero idle cost, no cold-start tier in the request path, and a smaller attack surface (no compute means no SSRF, no server-side dependency CVEs). Server-rendered alternatives add a compute tier — Lambda (cold starts plus per-request billing) or Fargate (always-on cost between contests) — that the workload does not justify. Dynamic interactions go straight from the browser to the orchestrator (judge1) via the CloudFront `/api/*` behavior, so a single distribution covers both static assets and API traffic uniformly under WAF.
 
+**4.9 Live standings — incremental Redis ZSET vs periodic full recompute vs per-event DocumentDB row update.**
+Options: (a) every minute, a Lambda recomputes the whole leaderboard from the submissions collection and writes a materialized view; (b) on every accepted verdict, the orchestrator (judge1) updates one row in DocumentDB and clients poll a `/standings` endpoint; (c) on every accepted verdict, the orchestrator (judge1) does a single `ZADD` into an ElastiCache **Redis sorted set** keyed per contest, and a publisher service fans deltas out to clients over WebSocket plus a CloudFront-cached top-100 snapshot.
+Choice: **(c) incremental ZSET + WebSocket + CloudFront-cached snapshot.**
+Rationale: at 40K concurrent standings readers and ~1–2K submissions/sec at peak, option (a) wastes ~240K document reads per minute on data that has not changed and is one full minute behind real-time. Option (b) sends ~40K poll requests every few seconds straight to the database, with each poll requiring a sort over the whole contest collection — DocumentDB is not built for this read shape. Option (c) is the design Codeforces actually uses in spirit: rank computation lives in a structure that supports O(log N) inserts and O(log N + k) range reads, the database is touched only on writes (and only to update one row), and the read fanout problem is solved by the CDN — 39,900 of the 40K viewers get the public top-100 from a CloudFront edge cache, while the ~100 personally-affected users per second receive a targeted WebSocket delta. The cost shape is also linear in submissions, not in standings readers, which is the right shape for a workload that scales horizontally on submissions and vertically on viewers.
+
 ---
 
-[← README](../README.md) | [← Prev: Cheating Detection](./03-cheating-detection.md) | **Design Decisions** | [Next: Well-Architected →](./05-well-architected.md)
+[← README](../README.md) | [← Prev: Post-Round Processing](./03-post-round-processing.md) | **Design Decisions** | [Next: Well-Architected →](./05-well-architected.md)
