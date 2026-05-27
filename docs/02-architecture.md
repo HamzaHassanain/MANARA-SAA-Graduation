@@ -98,25 +98,7 @@ A contest is the only time this platform has meaningful load, and a contest's lo
 
 A division-4 contest places ~40,000 users on the standings page simultaneously, each expecting near-real-time updates. The naïve approach — every standings reader polls the database every few seconds, or a cron job recomputes the full leaderboard every minute — collapses under that load. The architecture instead splits the problem into a **write path** (incremental rank updates on every verdict) and a **read path** (CloudFront-cached snapshot + WebSocket deltas), then handles **rating** as a separate post-round step.
 
-```mermaid
-flowchart LR
-    subgraph "Live (during contest)"
-        VJ[judge0 verdict] --> O["Orchestrator (judge1)<br/>ECS Fargate"]
-        O -- "ZADD score,user" --> Z[(ElastiCache Redis<br/>ZSET per contest)]
-        O -- "delta event" --> P["Standings Publisher<br/>(Fargate task)"]
-        P -- "WS delta push" --> AG[API Gateway<br/>WebSocket]
-        P -- "snapshot every 5s" --> S3S[S3: standings/top100.json]
-        S3S --> CF[CloudFront]
-        AG --> U1[40K live clients]
-        CF --> U1
-    end
-
-    subgraph "Post-round (one-shot)"
-        EB[EventBridge: round_ended] --> SF[Step Functions]
-        SF --> RC[Rating Δ Fargate task<br/>reads final ZSET]
-        RC --> DDB[(DocumentDB:<br/>users.rating)]
-    end
-```
+![Live Standings and Post-Round Rating](../drawings/Live-Standings-And-Post-Round-Rating.jpg)
 
 **Write path.** Every accepted verdict that lands in the orchestrator (judge1) triggers a single `ZADD` into a **Redis sorted set** keyed `contest:{id}:standings`, with the score composed as `(solved_count, -penalty, -last_AC_time)` so `ZREVRANGE` returns the leaderboard in display order in O(log N). The orchestrator also publishes a small "rank delta" event onto an internal Redis pub/sub channel — only the affected user, their old rank, and their new rank.
 

@@ -8,40 +8,9 @@ A post-round pipeline runs **once per round** after the contest window closes. I
 
 ## 3.1 Pipeline Architecture
 
-```mermaid
-flowchart TD
-    EB[EventBridge:<br/>round_ended]
-    EB --> SF[Step Functions<br/>Standard Workflow]
+![Post-Round Orchestration · Parallel Pipelines](../drawings/Post-Round-Orchestration-Parallel-Pipelines.jpg)
 
-    SF --> COL[Lambda:<br/>collectSubmissions]
-    COL --> P{Parallel}
-
-    P --> CD[Cheating Detection branch]
-    P --> RC[Rating Calculation branch]
-
-    subgraph CD [Cheating Detection]
-        BATCH[AWS Batch on Fargate:<br/>pairwise MOSS similarity]
-        LLM[Lambda + Bedrock:<br/>LLM-generated code score]
-        BEH[Athena:<br/>behavioral signals]
-        AGG[Lambda: aggregate score]
-        BATCH --> AGG
-        LLM --> AGG
-        BEH --> AGG
-        AGG --> DDB1[(DocumentDB:<br/>flagged_submissions)]
-    end
-
-    subgraph RC [Rating Calculation]
-        FINAL[Fargate task:<br/>read final ZSET<br/>from ElastiCache]
-        ELO["Apply CF-style Elo<br/>O(N log N)"]
-        FINAL --> ELO
-        ELO --> DDB2[(DocumentDB:<br/>users.rating updates)]
-        ELO --> SES[SES: rating-change email]
-    end
-
-    DDB1 --> SNS[SNS: ops + moderator alerts]
-```
-
-Detailed diagram with services and IAM roles: ![Post-Contest Pipeline](../drawings/Post-Contest-Pipeline.jpg)
+The earlier **cheating-detection-only** view of the pipeline (before the rating branch was added) is preserved for reference: ![Post-Contest Pipeline](../drawings/Post-Contest-Pipeline.jpg)
 
 ## 3.2 Trigger and Orchestration
 
