@@ -32,7 +32,7 @@ flowchart TD
 
     subgraph RC [Rating Calculation]
         FINAL[Fargate task:<br/>read final ZSET<br/>from ElastiCache]
-        ELO[Apply CF-style Elo<br/>O(N log N)]
+        ELO["Apply CF-style Elo<br/>O(N log N)"]
         FINAL --> ELO
         ELO --> DDB2[(DocumentDB:<br/>users.rating updates)]
         ELO --> SES[SES: rating-change email]

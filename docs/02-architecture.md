@@ -18,27 +18,81 @@ To keep each picture readable, the architecture is documented as **seven views**
 
 ### 2.1.1 Request Lifecycle
 
+The hero diagram traces what happens to a single submission from the moment the user clicks **Submit** in the SPA to the moment a verdict lands back in their browser. It is the spine of the architecture — every other view in this section is a drill-down on a slice of this picture. Three properties are worth fixing in the reader's head before the rest of the document elaborates: the only public AWS endpoint is **CloudFront** (WAF runs there, ACM-issued TLS terminates there); the orchestrator (judge1) ALB only accepts traffic from the **CloudFront managed prefix list**, so it is not directly reachable from the open internet; and the verdict path is **asynchronous** — `judge0` runs the code on its own schedule and the result is pushed back over WebSocket, not held on the original HTTPS connection.
+
 ![Request Lifecycle](../drawings/Request-Lifecycle.jpg)
+
+**Ingress.** Browser → CloudFront (`/api/*` behavior) → ALB → orchestrator (judge1) on Fargate. The orchestrator validates the Cognito JWT on every request against the User Pool's JWKS endpoint, with public keys cached in memory.
+
+**Sandboxed execution.** Source is written to the `submissions` S3 bucket, then a job is enqueued to the BullMQ-on-Redis durable queue. A `judge0` worker on ECS-on-EC2 pulls the job, runs the code inside `isolate`, and persists the verdict to RDS Postgres (judge0 internal) and DocumentDB (app-level).
+
+**Async return.** The original `POST /api/submissions` returns immediately with a submission ID. When the verdict is final, the orchestrator (judge1) pushes a message back to the user over **API Gateway WebSocket** to the connection that the SPA opened at sign-in — so the verdict surfaces in the UI without the client polling.
 
 ### 2.1.2 Identity & User Lifecycle
 
+This view isolates everything **Amazon Cognito** does so the request-lifecycle picture above can stay focused on the submission path. Cognito's User Pool handles sign-up, sign-in, email verification, password reset, and MFA via its hosted UI, then issues a pair of JWTs (id + access) that the SPA stores and includes on every `/api/*` call. The orchestrator (judge1) never sees a password — it only ever validates a JWT signature against the User Pool's **JWKS** endpoint, with the public keys cached in memory.
+
 ![Identity Lifecycle](../drawings/Identity-Lifecycle.jpg)
+
+**MFA posture.** TOTP MFA is enrolment-optional for end users and **required** for moderators and admins. The requirement is enforced at the User Pool level so a non-MFA token never reaches the orchestrator (judge1) in the first place.
+
+**Mail path.** The User Pool is wired to **Amazon SES** as the email sender so verification mail comes from a verified domain rather than the default `no-reply@verificationemail.com`. SPF and DKIM are configured on the sending domain to protect deliverability; a bounce/complaint SNS topic feeds back into DocumentDB so hard-bounced addresses are auto-suppressed.
+
+**Role-based access.** User attributes include `handle`, `email`, `role` (`user` / `moderator` / `admin`), and `rating`. The orchestrator (judge1) enforces the `role` claim on moderator and admin routes; end users never see those paths because the SPA reads the same claim and renders accordingly.
 
 ### 2.1.3 Monitoring, Logging & Alerting
 
+This view collapses the entire observability stack into one picture: what produces signals, where those signals land, and how a metric becomes a page. Every container reports to CloudWatch (Container Insights on both ECS clusters), every request gets an X-Ray segment, every log line lands in a CloudWatch Log Group, and a small disciplined set of alarms route through SNS — `ops-critical` to PagerDuty, `ops-warning` to Slack. The intent is that an on-call engineer never has to *go looking* for a problem; the synthetic canary tells them the platform is broken before any user notices.
+
 ![Monitoring and Logging](../drawings/Monitoring-And-Logging.jpg)
+
+**Source-of-truth liveness signal.** A **CloudWatch Synthetics canary** runs every 5 minutes from a separate AWS account, signs into a dedicated synthetic Cognito user, submits a known submission to a known problem, and asserts the verdict matches. Two consecutive failures page on-call. This — not any infrastructure metric — is what proves the platform is up from a real user's perspective.
+
+**Logging fanout.** Live, queryable streams land in **CloudWatch Logs** (Logs Insights for ad-hoc searches; 30 days for app, 365 days for audit groups). Long-retention copies — CloudFront access logs, ALB access logs, VPC Flow Logs, CloudTrail — land in the **S3 logs bucket** with Object Lock in Governance mode and a Glacier-transition lifecycle after 90 days.
+
+**Tracing.** **AWS X-Ray** covers CloudFront → ALB → orchestrator (judge1) → `judge0` / DocumentDB / S3. The service map is the first thing an on-call engineer looks at when an alarm fires — it shows which hop owns the latency or error spike without digging through individual log groups.
 
 ### 2.1.4 Security, Backup & Supporting Services
 
+This view answers the question "where does each cross-cutting AWS service actually plug in?" — KMS, Secrets Manager, GuardDuty / Config / Security Hub, AWS Backup, ECR, VPC Endpoints. None of these services live on the request path, but each one is load-bearing for defence-in-depth and disaster recovery. Drawing them on a separate view keeps the spine readable without hand-waving over compliance and durability.
+
 ![Security and Backup](../drawings/Security-And-Backup.jpg)
+
+**Encryption everywhere.** **KMS** customer-managed keys for S3 (testcases + submissions + logs), RDS, DocumentDB, EBS, and the ElastiCache replication group. **Secrets Manager** holds every database credential with rotation enabled. **CloudTrail** runs as a multi-region trail with log-file integrity validation.
+
+**Backup posture.** **AWS Backup** runs a centralized backup plan: daily RDS and DocumentDB snapshots with 35-day retention, point-in-time-recovery on RDS, and S3 versioning on the `testcases` and `submissions` buckets for per-object rollback. Targets and retention live in one backup plan rather than scattered across per-service backup configurations.
+
+**Threat detection + compliance.** **GuardDuty** for threat findings, **AWS Config** for resource-state rules (encryption-at-rest, public-bucket detection, SG-open-to-world) with auto-remediation via SSM documents where safe, **Security Hub** aggregating into a CIS-benchmarked dashboard. The whole defensive posture is built from managed services so there is no in-house detection engineering to maintain.
+
+**Image supply chain.** **Amazon ECR** with scan-on-push gates the container build pipeline before any image reaches the orchestrator (judge1) or `judge0`. Findings above a configurable severity block the deploy.
 
 ### 2.1.5 VPC & Network Topology
 
+This view enumerates the network shape explicitly because the rest of the architecture relies on it being correct. A single VPC (`10.0.0.0/16`) carries three subnet tiers spread across two Availability Zones: **public** (orchestrator ALB only — internet-facing but with its security group locked to the CloudFront managed prefix list), **private app** (orchestrator / judge1 ECS tasks), and **private worker/data** (`judge0`, ElastiCache, RDS, DocumentDB). Drawing the subnets and security-group lockdowns on a dedicated view is what makes the *"the only public AWS endpoint is CloudFront"* claim verifiable rather than assertional.
+
 ![VPC and Network Topology](../drawings/VPC-Network-Topology.jpg)
+
+**No public data plane.** Neither the queue, nor the databases, nor the sandbox hosts have public IPs. The CloudFront → ALB path is the only ingress; outbound is NAT-gated and limited to OS / package updates.
+
+**VPC Endpoints.** An **S3 gateway endpoint** plus **interface endpoints** for Secrets Manager, KMS, ECR (API + DKR), CloudWatch Logs, and STS keep AWS-service traffic off the public internet entirely. This both reduces NAT egress cost and removes a class of data-exfiltration risk — a compromised worker cannot reach `s3.amazonaws.com` over the internet because the route table sends that prefix to the gateway endpoint.
+
+**NAT.** One **NAT Gateway per AZ** handles the residual outbound traffic (OS patching, third-party API calls). Every first-party AWS API call has a VPC endpoint and bypasses NAT entirely.
+
+**Security groups.** Least-privilege chains: ALB SG accepts only CloudFront prefix list; orchestrator (judge1) SG accepts only the ALB SG; queue / databases / internal judge0 ALB SGs accept only the orchestrator (judge1) SG; RDS Postgres SG additionally accepts the `judge0` SG.
 
 ### 2.1.6 Autoscaling & Capacity Strategy
 
+A contest is the only time this platform has meaningful load, and a contest's load curve is **scheduled** — start time is known to the minute, problem-unlock produces a ~1–2K-submission/sec burst within the first minute, then the rate decays over the rest of the round. The autoscaling story therefore uses two complementary signals on two different compute targets, plus a mixed-fleet purchasing strategy to keep idle cost near zero.
+
 ![Autoscaling and Capacity Strategy](../drawings/Autoscaling-Capacity-Strategy.jpg)
+
+**Scheduled pre-warm.** An **EventBridge** rule fires 15 minutes before any known contest and bumps the `judge0` ASG desired-capacity to a contest-sized baseline. This avoids cold-start lag at problem-unlock — by the time the first submission lands, the workers are already running.
+
+**Queue-depth target tracking.** A sidecar Lambda publishes `Judge/Orchestrator/QueueDepth` to CloudWatch every minute (the "waiting" count from BullMQ). The `judge0` ASG has a target-tracking policy on this metric — e.g. 50 waiting jobs per running task. This is the right signal: CPU on a busy `judge0` host is always ~100% by design (it's running untrusted code in a tight loop), so a CPU-based policy would either never fire or fire constantly.
+
+**Orchestrator (judge1) scaling.** The Fargate service target-tracks **`ALBRequestCountPerTarget`** — a simpler request-rate signal that matches its stateless shape. No queue-depth heuristic needed; the orchestrator is the *producer* of queue load, not a consumer.
+
+**Mixed On-Demand + Spot fleet.** The `judge0` ASG runs **1–2 On-Demand baseline instances** for idle-period traffic, with all surge capacity coming from **Spot**. A killed Spot instance simply re-queues its in-flight batch via the orchestrator's (judge1) visibility-timeout-and-retry logic, so the interruption risk is tolerable in exchange for typical 50–70% cost savings during contests.
 
 ### 2.1.7 Live Standings & Rating
 
@@ -71,6 +125,8 @@ flowchart LR
 **Rating calculation.** Rating is **post-round only** — there is no meaningful Elo update mid-contest, so the work moves into the existing Step Functions pipeline described in [Post-Round Processing](./03-post-round-processing.md). When the `round_ended` event fires, a Fargate task reads the final ZSET, applies the Codeforces-style simplified Elo formula in O(N log N) for N=30K, and writes per-user rating deltas back to DocumentDB. This is the same pattern as the cheating-detection branch — two parallel branches of one Step Functions execution.
 
 ## 2.2 Single-Submission Flow
+
+This is the **request lifecycle** picture (§2.1.1) zoomed in on a single submission, with every component the submission touches drawn explicitly — including the ones the hero view deliberately collapses (the `submissions` S3 write, the BullMQ queue, the RDS Postgres write for judge0 internal state, the WebSocket return). Reading the diagram left-to-right reproduces the lifecycle of one verdict from `POST /api/submissions` to the WebSocket frame that surfaces "Accepted" in the user's browser. The earlier views explained each service in isolation; this view shows them composed end-to-end.
 
 ![Single Submission Flow](../drawings/Single-Submission-Flow.jpg)
 
